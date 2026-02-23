@@ -5,7 +5,7 @@ import { PlusCircle, FileText, CheckCircle, Clock, TrendingUp, IndianRupee } fro
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = import.meta.env.VITE_BACKEND_URL + '/api';
 
 export default function MakerDashboard() {
   const { token } = useAuth();
