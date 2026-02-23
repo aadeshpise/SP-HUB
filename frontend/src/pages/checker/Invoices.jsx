@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Search, Eye, CheckCircle, XCircle, X, FileText, AlertCircle } from 'lucide-react';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = import.meta.env.VITE_BACKEND_URL + '/api';
 const fmt = (n) => `\u20b9${(n / 100000).toFixed(2)} L`;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '\u2014';
 

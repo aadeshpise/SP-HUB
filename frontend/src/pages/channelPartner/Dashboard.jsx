@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { FileText, CheckCircle, Clock, IndianRupee, Building2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = import.meta.env.VITE_BACKEND_URL + '/api';
 
 export default function CPDashboard() {
   const { token, user } = useAuth();

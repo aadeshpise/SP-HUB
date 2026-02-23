@@ -4,7 +4,7 @@ import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 import { Search, FileText, IndianRupee, Clock, CheckCircle, AlertTriangle } from 'lucide-react';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = import.meta.env.VITE_BACKEND_URL + '/api';
 const fmt = (n) => `₹${(n / 100000).toFixed(2)} L`;
 
 const STATUS_COLORS = {
