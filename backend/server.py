@@ -1,21 +1,16 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os, logging, uuid
 from pathlib import Path
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone
 import jwt
 from passlib.context import CryptContext
+import copy
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 SECRET_KEY = "scf_platform_secret_key_2024"
@@ -94,6 +89,10 @@ REPAYMENT_DATA = [
     {"id":"rep-004","invoice_no":"INV-2024-001","channel_partner":"Jagdamba Motors","invoice_date":"01-Nov-2024","invoice_amount":1500000.0,"disbursed_amount":1489375.0,"due_date":"01-Dec-2024","repayment_date":"30-Nov-2024","repayment_amount":1489375.0,"overdue_days":0,"status":"Paid"},
 ]
 
+# ── In-Memory Storage ────────────────────────────────────────────────────────
+INVOICES = copy.deepcopy(SAMPLE_INVOICES)
+SESSIONS = []
+
 # ── Auth Helpers ──────────────────────────────────────────────────────────────
 def create_token(user_id, email, role):
     return jwt.encode({"user_id": user_id, "email": email, "role": role}, SECRET_KEY, algorithm=ALGORITHM)
@@ -107,15 +106,6 @@ def decode_token(token):
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     return decode_token(credentials.credentials)
 
-# ── Startup / Seed ────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup_db():
-    existing = await db.invoices.count_documents({})
-    if existing == 0:
-        for inv in SAMPLE_INVOICES:
-            await db.invoices.insert_one({**inv})
-        logger.info(f"Seeded {len(SAMPLE_INVOICES)} invoices")
-
 # ── Auth Routes ───────────────────────────────────────────────────────────────
 @api_router.post("/auth/login")
 async def login(req: LoginRequest):
@@ -123,43 +113,66 @@ async def login(req: LoginRequest):
     if not user or user["password"] != req.password:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     session_id = str(uuid.uuid4())
-    await db.sessions.insert_one({"session_id": session_id, "user_id": user["id"], "email": user["email"], "role": user["role"], "created_at": datetime.now(timezone.utc).isoformat()})
+    session_data = {
+        "session_id": session_id,
+        "user_id": user["id"],
+        "email": user["email"],
+        "role": user["role"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    SESSIONS.append(session_data)
     return {"session_id": session_id, "email": user["email"], "role": user["role"]}
 
 @api_router.post("/auth/verify-otp")
 async def verify_otp(req: OTPRequest):
     if req.otp != "000000":
         raise HTTPException(status_code=401, detail="Invalid OTP")
-    session = await db.sessions.find_one({"session_id": req.session_id}, {"_id": 0})
+
+    # Find session
+    session = next((s for s in SESSIONS if s["session_id"] == req.session_id), None)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
+
     user = USERS.get(session["email"])
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+
     token = create_token(user["id"], user["email"], user["role"])
-    await db.sessions.delete_one({"session_id": req.session_id})
+
+    # Remove session
+    SESSIONS.remove(session)
+
     return {"token": token, "user": {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"], "company": user["company"]}}
 
 # ── Invoice Routes ────────────────────────────────────────────────────────────
 @api_router.get("/invoices")
 async def get_invoices(status: Optional[str] = None, channel_partner: Optional[str] = None, current_user: dict = Depends(get_current_user)):
-    query = {}
+    filtered_invoices = INVOICES
+
     if status and status != "all":
-        query["status"] = status
+        filtered_invoices = [inv for inv in filtered_invoices if inv["status"] == status]
+
     if channel_partner:
-        query["channel_partner"] = channel_partner
+        filtered_invoices = [inv for inv in filtered_invoices if inv["channel_partner"] == channel_partner]
+
     if current_user["role"] == "channel_partner":
-        query["channel_partner"] = "Jagdamba Motors"
-    invoices = await db.invoices.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
-    return invoices
+        # Force filter for CP
+        filtered_invoices = [inv for inv in filtered_invoices if inv["channel_partner"] == "Jagdamba Motors"]
+
+    # Sort by created_at desc
+    filtered_invoices.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return filtered_invoices
 
 @api_router.post("/invoices")
 async def create_invoice(inv: InvoiceCreate, current_user: dict = Depends(get_current_user)):
     if current_user["role"] != "anchor_maker":
         raise HTTPException(status_code=403, detail="Only Anchor Maker can raise invoices")
+
     user = USERS.get(current_user["email"])
     now = datetime.now(timezone.utc).isoformat()
     discount_amount = (inv.amount * inv.discount_rate) / 100 / 12
+
     doc = {
         "id": str(uuid.uuid4()),
         "invoice_no": inv.invoice_no,
@@ -189,55 +202,73 @@ async def create_invoice(inv: InvoiceCreate, current_user: dict = Depends(get_cu
         "cp_approved_name": None,
         "cp_approved_at": None
     }
-    await db.invoices.insert_one(doc)
+
+    INVOICES.append(doc)
     return {k: v for k, v in doc.items() if k != "_id"}
 
 @api_router.get("/invoices/{invoice_id}")
 async def get_invoice(invoice_id: str, current_user: dict = Depends(get_current_user)):
-    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    inv = next((inv for inv in INVOICES if inv["id"] == invoice_id), None)
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     return inv
 
 @api_router.put("/invoices/{invoice_id}/status")
 async def update_invoice_status(invoice_id: str, update: InvoiceStatusUpdate, current_user: dict = Depends(get_current_user)):
-    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    if not inv:
+    inv_index = next((i for i, inv in enumerate(INVOICES) if inv["id"] == invoice_id), -1)
+    if inv_index == -1:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    inv = INVOICES[inv_index]
     user = USERS.get(current_user["email"])
     now = datetime.now(timezone.utc).isoformat()
     role = current_user["role"]
-    update_data = {"status": update.status, "remarks": update.remarks, "updated_at": now}
+
+    # Update fields
+    inv["status"] = update.status
+    inv["remarks"] = update.remarks
+    inv["updated_at"] = now
+
     if role == "anchor_checker" and update.status in ["approved_l1", "rejected_checker"]:
         if update.status == "approved_l1":
-            update_data["checker_approved_by"] = current_user["user_id"]
-            update_data["checker_approved_name"] = user["name"] if user else "Checker"
-            update_data["checker_approved_at"] = now
+            inv["checker_approved_by"] = current_user["user_id"]
+            inv["checker_approved_name"] = user["name"] if user else "Checker"
+            inv["checker_approved_at"] = now
     elif role == "channel_partner" and update.status in ["fully_approved", "rejected_cp"]:
         if update.status == "fully_approved":
-            update_data["cp_approved_by"] = current_user["user_id"]
-            update_data["cp_approved_name"] = user["name"] if user else "CP"
-            update_data["cp_approved_at"] = now
+            inv["cp_approved_by"] = current_user["user_id"]
+            inv["cp_approved_name"] = user["name"] if user else "CP"
+            inv["cp_approved_at"] = now
     else:
         raise HTTPException(status_code=403, detail="Not authorized for this action")
-    await db.invoices.update_one({"id": invoice_id}, {"$set": update_data})
-    return await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+
+    INVOICES[inv_index] = inv
+    return inv
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
 @api_router.get("/stats")
 async def get_stats(current_user: dict = Depends(get_current_user)):
-    query = {}
+    filtered_invoices = INVOICES
     if current_user["role"] == "channel_partner":
-        query["channel_partner"] = "Jagdamba Motors"
-    total = await db.invoices.count_documents(query)
-    pending_checker = await db.invoices.count_documents({**query, "status": "pending_checker_approval"})
-    approved_l1 = await db.invoices.count_documents({**query, "status": "approved_l1"})
-    rejected = await db.invoices.count_documents({**query, "status": {"$in": ["rejected_checker", "rejected_cp"]}})
-    fully_approved = await db.invoices.count_documents({**query, "status": "fully_approved"})
-    pipeline = [{"$match": {**query, "status": "fully_approved"}}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]
-    result = await db.invoices.aggregate(pipeline).to_list(1)
-    approved_amount = result[0]["total"] if result else 0
-    return {"total_invoices": total, "pending_checker": pending_checker, "approved_l1": approved_l1, "rejected": rejected, "fully_approved": fully_approved, "approved_amount": approved_amount}
+        filtered_invoices = [inv for inv in INVOICES if inv["channel_partner"] == "Jagdamba Motors"]
+
+    total = len(filtered_invoices)
+    pending_checker = len([inv for inv in filtered_invoices if inv["status"] == "pending_checker_approval"])
+    approved_l1 = len([inv for inv in filtered_invoices if inv["status"] == "approved_l1"])
+    rejected = len([inv for inv in filtered_invoices if inv["status"] in ["rejected_checker", "rejected_cp"]])
+    fully_approved_invoices = [inv for inv in filtered_invoices if inv["status"] == "fully_approved"]
+    fully_approved = len(fully_approved_invoices)
+
+    approved_amount = sum(inv["amount"] for inv in fully_approved_invoices)
+
+    return {
+        "total_invoices": total,
+        "pending_checker": pending_checker,
+        "approved_l1": approved_l1,
+        "rejected": rejected,
+        "fully_approved": fully_approved,
+        "approved_amount": approved_amount
+    }
 
 # ── Programs ──────────────────────────────────────────────────────────────────
 @api_router.get("/programs")
@@ -264,8 +295,5 @@ async def get_repayment(current_user: dict = Depends(get_current_user)):
     return REPAYMENT_DATA
 
 app.include_router(api_router)
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','), allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
