@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { PlusCircle, Trash2, Save, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = import.meta.env.VITE_BACKEND_URL + '/api';
 
 const CHANNEL_PARTNERS = ['Jagdamba Motors', 'Krishna Auto Dealers', 'Shree Ganesh Motors', 'Meenakshi Auto', 'Sunrise Vehicles', 'National Auto Hub'];
 const PROGRAMS = ['Dealer Finance Program', 'Vendor Finance Program'];

@@ -5,7 +5,7 @@ import { PlusCircle, Search, TrendingUp } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 
-const API = process.env.REACT_APP_BACKEND_URL + '/api';
+const API = import.meta.env.VITE_BACKEND_URL + '/api';
 
 export default function MakerPrograms() {
   const { token } = useAuth();
