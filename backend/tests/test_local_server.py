@@ -1,14 +1,14 @@
 """
-SCF Platform Backend API Tests
+SCF Platform Backend API Tests (Local In-Memory Version)
 Tests all three user flows: Maker, Checker, and Channel Partner (CP)
 Covers: Auth, Invoices CRUD, Stats, Channel Partners, Programs, Repayment
 """
 import pytest
-import requests
-import os
+from fastapi.testclient import TestClient
+from backend.server import app
 import time
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://invoice-approval-6.preview.emergentagent.com').rstrip('/')
+client = TestClient(app)
 
 # Test credentials
 MAKER_CREDS = {"email": "ramesh@tatamotors.com", "password": "password"}
@@ -22,7 +22,7 @@ class TestAuthFlow:
     
     def test_maker_login(self):
         """Test Maker login returns session_id"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json=MAKER_CREDS)
+        response = client.post("/api/auth/login", json=MAKER_CREDS)
         assert response.status_code == 200
         data = response.json()
         assert "session_id" in data
@@ -31,7 +31,7 @@ class TestAuthFlow:
     
     def test_checker_login(self):
         """Test Checker login returns session_id"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json=CHECKER_CREDS)
+        response = client.post("/api/auth/login", json=CHECKER_CREDS)
         assert response.status_code == 200
         data = response.json()
         assert "session_id" in data
@@ -40,7 +40,7 @@ class TestAuthFlow:
     
     def test_cp_login(self):
         """Test Channel Partner login returns session_id"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json=CP_CREDS)
+        response = client.post("/api/auth/login", json=CP_CREDS)
         assert response.status_code == 200
         data = response.json()
         assert "session_id" in data
@@ -49,17 +49,17 @@ class TestAuthFlow:
     
     def test_invalid_login(self):
         """Test invalid credentials return 401"""
-        response = requests.post(f"{BASE_URL}/api/auth/login", json={"email": "invalid@test.com", "password": "wrong"})
+        response = client.post("/api/auth/login", json={"email": "invalid@test.com", "password": "wrong"})
         assert response.status_code == 401
     
     def test_otp_verification_maker(self):
         """Test OTP verification for Maker returns token and user"""
         # First login
-        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json=MAKER_CREDS)
+        login_resp = client.post("/api/auth/login", json=MAKER_CREDS)
         session_id = login_resp.json()["session_id"]
         
         # Verify OTP
-        otp_resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
+        otp_resp = client.post("/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
         assert otp_resp.status_code == 200
         data = otp_resp.json()
         assert "token" in data
@@ -69,38 +69,38 @@ class TestAuthFlow:
     
     def test_otp_verification_checker(self):
         """Test OTP verification for Checker returns token and user"""
-        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json=CHECKER_CREDS)
+        login_resp = client.post("/api/auth/login", json=CHECKER_CREDS)
         session_id = login_resp.json()["session_id"]
         
-        otp_resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
+        otp_resp = client.post("/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
         assert otp_resp.status_code == 200
         data = otp_resp.json()
         assert data["user"]["role"] == "anchor_checker"
     
     def test_otp_verification_cp(self):
         """Test OTP verification for Channel Partner returns token and user"""
-        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json=CP_CREDS)
+        login_resp = client.post("/api/auth/login", json=CP_CREDS)
         session_id = login_resp.json()["session_id"]
         
-        otp_resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
+        otp_resp = client.post("/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
         assert otp_resp.status_code == 200
         data = otp_resp.json()
         assert data["user"]["role"] == "channel_partner"
     
     def test_invalid_otp(self):
         """Test invalid OTP returns 401"""
-        login_resp = requests.post(f"{BASE_URL}/api/auth/login", json=MAKER_CREDS)
+        login_resp = client.post("/api/auth/login", json=MAKER_CREDS)
         session_id = login_resp.json()["session_id"]
         
-        otp_resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json={"session_id": session_id, "otp": "123456"})
+        otp_resp = client.post("/api/auth/verify-otp", json={"session_id": session_id, "otp": "123456"})
         assert otp_resp.status_code == 401
 
 
 # Helper to get token
 def get_token(creds):
-    login_resp = requests.post(f"{BASE_URL}/api/auth/login", json=creds)
+    login_resp = client.post("/api/auth/login", json=creds)
     session_id = login_resp.json()["session_id"]
-    otp_resp = requests.post(f"{BASE_URL}/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
+    otp_resp = client.post("/api/auth/verify-otp", json={"session_id": session_id, "otp": OTP})
     return otp_resp.json()["token"]
 
 
@@ -114,7 +114,7 @@ class TestMakerInvoiceFlow:
     
     def test_get_invoices(self):
         """Maker can view all invoices"""
-        response = requests.get(f"{BASE_URL}/api/invoices", headers=self.headers)
+        response = client.get("/api/invoices", headers=self.headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -122,7 +122,7 @@ class TestMakerInvoiceFlow:
     
     def test_get_invoices_by_status(self):
         """Maker can filter invoices by status"""
-        response = requests.get(f"{BASE_URL}/api/invoices", headers=self.headers, params={"status": "pending_checker_approval"})
+        response = client.get("/api/invoices", headers=self.headers, params={"status": "pending_checker_approval"})
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -144,7 +144,7 @@ class TestMakerInvoiceFlow:
             "discount_rate": 8.5,
             "description": "Test invoice from pytest"
         }
-        response = requests.post(f"{BASE_URL}/api/invoices", headers=self.headers, json=invoice_data)
+        response = client.post("/api/invoices", headers=self.headers, json=invoice_data)
         assert response.status_code == 200
         data = response.json()
         assert data["invoice_no"] == invoice_data["invoice_no"]
@@ -153,7 +153,7 @@ class TestMakerInvoiceFlow:
         assert "id" in data
         
         # Verify by GET
-        get_resp = requests.get(f"{BASE_URL}/api/invoices/{data['id']}", headers=self.headers)
+        get_resp = client.get(f"/api/invoices/{data['id']}", headers=self.headers)
         assert get_resp.status_code == 200
         fetched = get_resp.json()
         assert fetched["invoice_no"] == invoice_data["invoice_no"]
@@ -161,12 +161,12 @@ class TestMakerInvoiceFlow:
     def test_get_single_invoice(self):
         """Maker can get single invoice details"""
         # First get list
-        list_resp = requests.get(f"{BASE_URL}/api/invoices", headers=self.headers)
+        list_resp = client.get("/api/invoices", headers=self.headers)
         invoices = list_resp.json()
         assert len(invoices) > 0
         
         invoice_id = invoices[0]["id"]
-        response = requests.get(f"{BASE_URL}/api/invoices/{invoice_id}", headers=self.headers)
+        response = client.get(f"/api/invoices/{invoice_id}", headers=self.headers)
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == invoice_id
@@ -193,12 +193,12 @@ class TestCheckerInvoiceFlow:
             "amount": 100000.0,
             "discount_rate": 8.5
         }
-        response = requests.post(f"{BASE_URL}/api/invoices", headers=self.headers, json=invoice_data)
+        response = client.post("/api/invoices", headers=self.headers, json=invoice_data)
         assert response.status_code == 403
     
     def test_get_invoices(self):
         """Checker can view all invoices"""
-        response = requests.get(f"{BASE_URL}/api/invoices", headers=self.headers)
+        response = client.get("/api/invoices", headers=self.headers)
         assert response.status_code == 200
         assert isinstance(response.json(), list)
     
@@ -219,12 +219,12 @@ class TestCheckerInvoiceFlow:
             "amount": 200000.0,
             "discount_rate": 8.5
         }
-        create_resp = requests.post(f"{BASE_URL}/api/invoices", headers=maker_headers, json=invoice_data)
+        create_resp = client.post("/api/invoices", headers=maker_headers, json=invoice_data)
         invoice_id = create_resp.json()["id"]
         
         # Now approve as Checker
-        approve_resp = requests.put(
-            f"{BASE_URL}/api/invoices/{invoice_id}/status",
+        approve_resp = client.put(
+            f"/api/invoices/{invoice_id}/status",
             headers=self.headers,
             json={"status": "approved_l1", "remarks": "Approved at L1 by checker"}
         )
@@ -250,12 +250,12 @@ class TestCheckerInvoiceFlow:
             "amount": 150000.0,
             "discount_rate": 8.5
         }
-        create_resp = requests.post(f"{BASE_URL}/api/invoices", headers=maker_headers, json=invoice_data)
+        create_resp = client.post("/api/invoices", headers=maker_headers, json=invoice_data)
         invoice_id = create_resp.json()["id"]
         
         # Reject as Checker
-        reject_resp = requests.put(
-            f"{BASE_URL}/api/invoices/{invoice_id}/status",
+        reject_resp = client.put(
+            f"/api/invoices/{invoice_id}/status",
             headers=self.headers,
             json={"status": "rejected_checker", "remarks": "Rejected due to credit limit"}
         )
@@ -286,12 +286,12 @@ class TestCPInvoiceFlow:
             "amount": 100000.0,
             "discount_rate": 8.5
         }
-        response = requests.post(f"{BASE_URL}/api/invoices", headers=self.headers, json=invoice_data)
+        response = client.post("/api/invoices", headers=self.headers, json=invoice_data)
         assert response.status_code == 403
     
     def test_get_invoices_filtered_for_cp(self):
         """CP sees only their own invoices (Jagdamba Motors)"""
-        response = requests.get(f"{BASE_URL}/api/invoices", headers=self.headers)
+        response = client.get("/api/invoices", headers=self.headers)
         assert response.status_code == 200
         data = response.json()
         # All invoices should be for Jagdamba Motors
@@ -317,15 +317,15 @@ class TestCPInvoiceFlow:
             "amount": 300000.0,
             "discount_rate": 8.5
         }
-        create_resp = requests.post(f"{BASE_URL}/api/invoices", headers=maker_headers, json=invoice_data)
+        create_resp = client.post("/api/invoices", headers=maker_headers, json=invoice_data)
         invoice_id = create_resp.json()["id"]
         
         # L1 approve as Checker
-        requests.put(f"{BASE_URL}/api/invoices/{invoice_id}/status", headers=checker_headers, json={"status": "approved_l1", "remarks": ""})
+        client.put(f"/api/invoices/{invoice_id}/status", headers=checker_headers, json={"status": "approved_l1", "remarks": ""})
         
         # Final approve as CP
-        cp_approve_resp = requests.put(
-            f"{BASE_URL}/api/invoices/{invoice_id}/status",
+        cp_approve_resp = client.put(
+            f"/api/invoices/{invoice_id}/status",
             headers=self.headers,
             json={"status": "fully_approved", "remarks": "Final approval granted"}
         )
@@ -353,15 +353,15 @@ class TestCPInvoiceFlow:
             "amount": 250000.0,
             "discount_rate": 8.5
         }
-        create_resp = requests.post(f"{BASE_URL}/api/invoices", headers=maker_headers, json=invoice_data)
+        create_resp = client.post("/api/invoices", headers=maker_headers, json=invoice_data)
         invoice_id = create_resp.json()["id"]
         
         # L1 approve as Checker
-        requests.put(f"{BASE_URL}/api/invoices/{invoice_id}/status", headers=checker_headers, json={"status": "approved_l1", "remarks": ""})
+        client.put(f"/api/invoices/{invoice_id}/status", headers=checker_headers, json={"status": "approved_l1", "remarks": ""})
         
         # Reject as CP
-        cp_reject_resp = requests.put(
-            f"{BASE_URL}/api/invoices/{invoice_id}/status",
+        cp_reject_resp = client.put(
+            f"/api/invoices/{invoice_id}/status",
             headers=self.headers,
             json={"status": "rejected_cp", "remarks": "Rejected by channel partner"}
         )
@@ -377,7 +377,7 @@ class TestStatsAPI:
         """Maker can get stats"""
         token = get_token(MAKER_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/stats", headers=headers)
+        response = client.get("/api/stats", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert "total_invoices" in data
@@ -391,7 +391,7 @@ class TestStatsAPI:
         """Checker can get stats"""
         token = get_token(CHECKER_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/stats", headers=headers)
+        response = client.get("/api/stats", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert "total_invoices" in data
@@ -400,7 +400,7 @@ class TestStatsAPI:
         """CP gets stats filtered to their channel partner"""
         token = get_token(CP_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/stats", headers=headers)
+        response = client.get("/api/stats", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert "total_invoices" in data
@@ -413,7 +413,7 @@ class TestChannelPartnersAPI:
         """Can get channel partners list"""
         token = get_token(CHECKER_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/channel-partners", headers=headers)
+        response = client.get("/api/channel-partners", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -430,7 +430,7 @@ class TestChannelPartnersAPI:
         """Can get single channel partner details"""
         token = get_token(CHECKER_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/channel-partners/CP001", headers=headers)
+        response = client.get("/api/channel-partners/CP001", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == "CP001"
@@ -440,7 +440,7 @@ class TestChannelPartnersAPI:
         """Returns 404 for non-existent CP"""
         token = get_token(CHECKER_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/channel-partners/INVALID", headers=headers)
+        response = client.get("/api/channel-partners/INVALID", headers=headers)
         assert response.status_code == 404
 
 
@@ -451,7 +451,7 @@ class TestProgramsAPI:
         """Maker can get all programs"""
         token = get_token(MAKER_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/programs", headers=headers)
+        response = client.get("/api/programs", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -461,7 +461,7 @@ class TestProgramsAPI:
         """CP gets only their programs"""
         token = get_token(CP_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/programs", headers=headers)
+        response = client.get("/api/programs", headers=headers)
         assert response.status_code == 200
         data = response.json()
         # All should be Jagdamba Motors
@@ -476,7 +476,7 @@ class TestRepaymentAPI:
         """Can get repayment ledger"""
         token = get_token(CP_CREDS)
         headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/api/repayment", headers=headers)
+        response = client.get("/api/repayment", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -494,12 +494,12 @@ class TestUnauthorizedAccess:
     
     def test_invoices_without_token(self):
         """Cannot access invoices without token"""
-        response = requests.get(f"{BASE_URL}/api/invoices")
+        response = client.get("/api/invoices")
         assert response.status_code in [401, 403]
     
     def test_stats_without_token(self):
         """Cannot access stats without token"""
-        response = requests.get(f"{BASE_URL}/api/stats")
+        response = client.get("/api/stats")
         assert response.status_code in [401, 403]
 
 
